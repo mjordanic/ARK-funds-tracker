@@ -1,0 +1,30 @@
+#version of docker compose
+version: '3'
+services:
+  ark_app:
+    build: .
+    networks:
+      primus-dev:
+        ipv4_address: 10.105.1.101
+    ports:
+      - 8080:8080
+    tty: true
+    
+    
+  ark_db:
+    image: timescale/timescaledb:latest-pg14
+    networks:
+      primus-dev:
+        ipv4_address: 10.105.1.102
+    ports:
+      - 5432:5432
+    environment:
+      - POSTGRES_PASSWORD=ark_db_pass
+
+
+networks:
+  primus-dev:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.105.1.0/24
