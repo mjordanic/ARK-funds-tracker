@@ -5,6 +5,9 @@ import os
 import datetime as dt
 import math
 
+import pandas as pd
+import numpy as np
+
 import config
 import csv
 import psycopg2
@@ -200,8 +203,6 @@ def insert_holdings_into_database(current_date, connection, cursor):
 
 def list_companies_by_value(cursor):
 
-    WEBHOOK_URL = config.WEBHOOK_URL
-
     cursor.execute("select distinct(dt) from etf_holdings ORDER BY dt DESC LIMIT 1")
     dates = cursor.fetchall()
     date_current= dates[0][0].strftime("%Y-%m-%d")
@@ -215,7 +216,10 @@ def list_companies_by_value(cursor):
         """, (date_current,))
     market_values = cursor.fetchall()
     
-    message = [f'----------------{date_current}---------------------------\nTICKER -- COMPANY -- VALUE PCT -- (FUND PERC (PERC IN FUND))']
+    initial_message = f'-\n -\n -\n -\n ----------------{date_current}---------------------------\nTICKER  --  COMPANY  --  VALUE PCT  --  (FUND PERC (PERC IN FUND))'
+    send_discord_message(initial_message)
+    
+    message = []
     total_value = sum([int(value[2]) for value in market_values])
 
     for row in market_values:
@@ -251,18 +255,7 @@ def list_companies_by_value(cursor):
             message_send = message[i*15:]
         message_send = ('\n').join(message_send) 
         
-        payload = {
-                "username": "ARKK Tracker",
-                "content": message_send
-            }
-        requests.post(WEBHOOK_URL, json=payload)
-
-
-    payload = {
-        "username": "ARK Tracker",
-        "content": "-\n-\n-\n-\n-\n-\n-\n"
-    }
-    requests.post(WEBHOOK_URL, json=payload)
+        send_discord_message(message_send)
 
     return market_values
 
@@ -270,48 +263,104 @@ def list_companies_by_value(cursor):
 
 def list_differences(cursor):
 
-    WEBHOOK_URL = config.WEBHOOK_URL
-
-    cursor.execute("select distinct(dt) from etf_holding ORDER BY dt DESC LIMIT 2")
+    cursor.execute("select distinct(dt) from etf_holdings ORDER BY dt DESC LIMIT 2")
     dates = cursor.fetchall()
     date_current= dates[0][0].strftime("%Y-%m-%d")
     date_previous = dates[1][0].strftime("%Y-%m-%d")
 
+
     cursor.execute("""
-        SELECT t2.ticker, t2.company, SUM(t1.market_value)
-        FROM etf_holdings t1 JOIN stocks t2 ON t1.stock_id = t2.id
-        WHERE t1.dt=%s
-        GROUP BY t2.ticker, t2.company
-        ORDER BY SUM(t1.market_value) DESC
+        SELECT * FROM etf_holdings WHERE dt= %s
         """, (date_current,))
-    market_values = cursor.fetchall()
-    
-    message = [f'----------------{date_current}---------------------------\nTICKER -- COMPANY -- VALUE PCT -- (FUND PERC (PERC IN FUND))']
-    total_value = sum([int(value[2]) for value in market_values])
+    current_holding = cursor.fetchall()
 
-    for row in market_values:
-        ticker = row[0]
-        company = row[1]
-        market_value = int(row[2])
-        value_pct = market_value/total_value*100
-        message_row = [ticker, company, f"{value_pct:.2f}%"]
+    cursor.execute("""
+        SELECT * FROM etf_holdings WHERE dt= %s
+        """, (date_previous,))
+    prev_holding = cursor.fetchall()
 
-        cursor.execute("""
-            SELECT fund, shares, weight 
-            FROM etf_holdings
-            WHERE dt=%s and stock_id=(SELECT id FROM stocks WHERE ticker=%s)
-            ORDER BY shares DESC
-        """, (date_current,ticker))
-        individual_share = cursor.fetchall()
-        total_shares = sum([ind_share[1] for ind_share in individual_share])
+    cursor.execute("""
+        SELECT id, ticker, company FROM stocks
+        """)
+    stocks_data = cursor.fetchall()
+    stocks_data = pd.DataFrame(stocks_data, columns=['id', 'ticker', 'company']).set_index('id')
+
+    prev_holding = [[i[0], i[1], i[2], i[3], float(i[4]), float(i[5])]for i in prev_holding]
+    current_holding = [[i[0], i[1], i[2], i[3], float(i[4]), float(i[5])]for i in current_holding]
+    current_holding = pd.DataFrame(current_holding, columns=['date', 'fund', 'index', 'shares', 'value', 'percent'])
+    prev_holding = pd.DataFrame(prev_holding, columns=['date', 'fund', 'index', 'shares', 'value', 'percent'])
+
+    merged = current_holding.merge(prev_holding, how='outer', left_on=['fund', 'index'], right_on=['fund', 'index'])
+    merged['diff_shares'] = merged['shares_x']/merged['shares_y'] - 1 
+    merged['diff_value'] = merged['value_x']/merged['value_y'] - 1 
+    merged['diff_percent'] = merged['percent_x']/merged['percent_y'] - 1 
+
+    grouped = merged.groupby('index')[['shares_x', 'shares_y', 'value_x', 'value_y', 'percent_x', 'percent_y']].sum()
+
+    grouped['diff_shares'] = grouped['shares_x']/grouped['shares_y'] - 1 
+    grouped['diff_value'] = grouped['value_x']/grouped['value_y'] - 1 
+    grouped['diff_percent'] = grouped['percent_x']/grouped['percent_y'] - 1 
+
+    grouped['abs_diff_shares'] = grouped['diff_shares'].abs()
+    grouped.sort_values('abs_diff_shares', ascending=False, inplace=True)
+    grouped.dropna(subset='abs_diff_shares', inplace=True)
+
+    grouped['total_value_percent'] = grouped['value_x']/grouped['value_x'].sum()
+
+    message = []
+    for row in grouped.iterrows():
+        stock_id = row[0]
+        ticker = stocks_data['ticker'][stock_id]
+        company = stocks_data['company'][stock_id]
+        stock_diff_shares = row[1]['abs_diff_shares']
+        if stock_diff_shares==-1:
+            stock_diff_shares="Removed"
+        elif stock_diff_shares==np.inf:
+            stock_diff_shares="Added"
+        else:
+            if stock_diff_shares>0:
+                stock_diff_shares=f"^{100*stock_diff_shares:.2f}%"
+            else:
+                stock_diff_shares=f"{100*stock_diff_shares:.2f}%"
+        
+        stock_diff_value_pct = f"{100*row[1]['diff_value']:.2f}%"
+        stock_value_pct = f"{100*row[1]['total_value_percent']:.2f}"
+        
+        message_row = [ticker, company, stock_diff_shares, stock_diff_value_pct, stock_value_pct]
+        
+        merged_stock = merged.loc[merged['index']==stock_id].copy()
+        merged_stock['abs_diff_shares'] = merged_stock['diff_shares'].abs()
+        merged_stock.sort_values('abs_diff_shares', ascending=False, inplace=True)
+        merged_stock.dropna(subset='abs_diff_shares', inplace=True)
+        merged_stock[['fund', 'abs_diff_shares', 'value_x', 'percent_x']].values
+        
         message_ind = []
-        for ind_share in individual_share:
-            message_ind.append(f"{ind_share[0]} {ind_share[1]/(total_shares+1e-15)*100:.2f}% ({100*float(ind_share[2])}%) ")
+        for fund_rows in merged_stock.iterrows():
+            fund_name = fund_rows[1]['fund']
+            
+            fund_diff_shares = fund_rows[1]['abs_diff_shares']
+            if fund_diff_shares==-1:
+                fund_diff_shares="Removed"
+            elif fund_diff_shares==np.inf:
+                fund_diff_shares="Added"
+            else:
+                if fund_diff_shares>0:
+                    fund_diff_shares=f"^{100*fund_diff_shares:.2f}%"
+                else:
+                    fund_diff_shares=f"{100*fund_diff_shares:.2f}%"
+                
+            fund_value = fund_rows[1]['value_x']/1e6
+            
+            message_ind.append(f"{fund_name} {fund_diff_shares} (M${fund_value:.1f})")
 
         message_ind = '('+ (', ').join(message_ind) +')'
         message_row.append(message_ind)
         message_row = (' -- ').join(message_row)
         message.append(message_row) 
+
+    initial_message = f'-\n -\n -\n -\n ----------------{date_current}---------------------------\nTICKER  --  COMPANY  --  CHANGE in SHARES  --  CHANGE in VALUE  --  CURRENT PCT of TOTAL VALUE  --  (FUND, SHARE CHANGE, (VALUE))'
+    send_discord_message(initial_message, ch='differences')
+    
 
     number_of_rows = len(message)
     for i in range(math.ceil(number_of_rows/15.0)):
@@ -322,21 +371,21 @@ def list_differences(cursor):
             message_send = message[i*15:]
         message_send = ('\n').join(message_send) 
         
-        payload = {
-                "username": "ARKK Tracker",
-                "content": message_send
-            }
-        requests.post(WEBHOOK_URL, json=payload)
+        send_discord_message(message_send, ch='differences')
+
+    return 1
 
 
+
+
+def send_discord_message(message, ch='values'):
+    if ch=='values':
+        WEBHOOK_URL = config.WEBHOOK_VALUES
+    elif ch=='differences':
+        WEBHOOK_URL = config.WEBHOOK_DIFFERENCES
     payload = {
-        "username": "ARKK Tracker",
-        "content": "-\n-\n-\n-\n-\n-\n-\n"
-    }
+                "username": "ARK Tracker",
+                "content": message
+            }
     requests.post(WEBHOOK_URL, json=payload)
-
-    return market_values
-
-
-
 

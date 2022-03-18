@@ -29,10 +29,7 @@ insert_holdings_into_database(current_date, connection, cursor)
 # list all companies sorted by market values
 market_values = list_companies_by_value(cursor)
 
+# list differences between last two dates when data was collected
+list_differences(cursor)
 
-# # compare only 2 recent dates - get the dates from the database
-# cursor.execute("select distinct(dt) from etf_holding ORDER BY dt DESC LIMIT 2")
-# dates = cursor.fetchall()
-# date_current= dates[0][0].strftime("%Y-%m-%d")
-# date_previous = dates[1][0].strftime("%Y-%m-%d")
 
