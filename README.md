@@ -16,7 +16,8 @@ The data is stored in a [Timescale database](https://www.timescale.com).
 
 The database is first installed and run through a docker container using:
 docker run -d --name timescaledb -p 5432:5432 -e POSTGRES_PASSWORD=<password> timescale/timescaledb:latest-pg14
-N!B! Replace <password> with your database password.
+
+ N!B! Replace <password> with your database password.
 
 After that create the database ark_holdings (CREATE DATABASE ark_holdings), connect to the database and run the create_tables.sql script to create the tables.
 
