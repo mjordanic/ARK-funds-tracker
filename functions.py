@@ -246,6 +246,7 @@ def list_companies_by_value(cursor):
         message_row = (' -- ').join(message_row)
         message.append(message_row) 
 
+    # FIX IT >> Separate message to multiple messages. Only 2000 ch can be sent to Discord
     number_of_rows = len(message)
     for i in range(math.ceil(number_of_rows/15.0)):
         
@@ -361,7 +362,7 @@ def list_differences(cursor):
     initial_message = f'-\n -\n -\n -\n ----------------{date_current}---------------------------\nTICKER  --  COMPANY  --  CHANGE in SHARES  --  CHANGE in VALUE  --  CURRENT PCT of TOTAL VALUE  --  (FUND, SHARE CHANGE, (VALUE))'
     send_discord_message(initial_message, ch='differences')
     
-
+    # Separate message to multiple messages. Only 2000 ch can be sent to Discord
     number_of_rows = len(message)
     for i in range(math.ceil(number_of_rows/15.0)):
         

@@ -31,3 +31,8 @@ After the file opens in the editor, the following command should be pasted:
 >mm hh  *  *   *  /FULL_PATH_TO_THE_FOLDER/ARK-funds-tracker/cron_execute.sh
 
 This will make the *cron_execute.sh* script running each day at hh:mm.
+
+
+## Note
+Currently all downloads are still saved in 'data' folder as csv files. In a mature stage of the project, only database will be used.
+
